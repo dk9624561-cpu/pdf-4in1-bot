@@ -1,0 +1,22 @@
+# Environment variables (keep secrets private)
+.env
+
+# Temporary files & caches
+temp_files/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Output and sample PDFs
+*.pdf
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# IDE / OS specific
+.vscode/
+.idea/
+*.swp
+Thumbs.db

@@ -10,7 +10,10 @@ import sys
 import shutil
 import logging
 import asyncio
+import threading
 from pathlib import Path
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import httpx
 from dotenv import load_dotenv
 
 # Ensure UTF-8 output encoding for Windows terminal
@@ -53,6 +56,59 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger("PDF4in1Bot")
+
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """Simple HTTP server handler for Render Web Service health checks and UptimeRobot."""
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK - PDF 4-in-1 Handout Bot is running 24/7!")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        # Silence routine health check logs to keep terminal clean
+        return
+
+
+def start_health_check_server():
+    """Start an HTTP server on $PORT for Render Web Service compatibility."""
+    port = int(os.getenv("PORT", 10000))
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        logger.info(f"Health check HTTP server started on port {port}")
+        server.serve_forever()
+    except Exception as e:
+        logger.warning(f"Could not start health check server on port {port}: {e}")
+
+
+async def self_ping_loop():
+    """Periodically ping self URL to keep Render free tier awake 24/7."""
+    await asyncio.sleep(15)
+    external_url = os.getenv("RENDER_EXTERNAL_URL")
+    if not external_url:
+        port = os.getenv("PORT", "10000")
+        external_url = f"http://127.0.0.1:{port}"
+
+    logger.info(f"Self-ping keepalive activated for URL: {external_url}")
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(external_url)
+                logger.info(f"Keep-alive self-ping status: {resp.status_code}")
+        except Exception as e:
+            logger.warning(f"Keep-alive self-ping notice: {e}")
+        await asyncio.sleep(240)  # Ping every 4 minutes (240s)
+
+
+async def post_init(application):
+    """Called after application initialization to start background tasks."""
+    asyncio.create_task(self_ping_loop())
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -256,7 +312,11 @@ def main():
     print("🚀 Starting PDF 4-in-1 Handout Telegram Bot...")
     print("=" * 60)
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    # Start health check HTTP server in background thread for Render
+    health_thread = threading.Thread(target=start_health_check_server, daemon=True)
+    health_thread.start()
+
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
